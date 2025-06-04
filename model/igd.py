@@ -35,12 +35,12 @@ class IGD(nn.Module):
         self.encoder = LocalVoxelEncoder(c_dim=32, unet=True, plane_resolution=40)
 
         self.grasp_sampler = Diffusion(schedulers="DDPM", condition_mask=[1,1,1,0,0,0,0],  prediction_type='epsilon', beta_schedule='linear', num_inference_steps=10)
-        self.decoder_grasp_qual = LocalDecoder(dim=3, out_dim=1, c_dim=96, hidden_size=hidden_dim, feature_sampler=GraspSO3DeformableAttn(96, out_dim=96, feature_sampler=BilinearSampler(padding=0.1), num_heads=num_heads, zero_offset=True, fixed_control_points=False))
+        self.decoder_grasp_qual = LocalDecoder(dim=3, out_dim=1, c_dim=96, hidden_size=hidden_dim, feature_sampler=GraspSO3DeformableAttn(96, out_dim=96, feature_sampler=BilinearSampler(padding=0.1,plane_type=['xz', 'xy', 'yz']), num_heads=num_heads, zero_offset=True, fixed_control_points=False))
         self.decoder_rot = TimeLocalDecoder(dim=7, out_dim=7, c_dim=96, hidden_size=128, feature_sampler=BilinearSampler(padding=0.1))
-        self.decoder_qual =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=DeformableAttn(96, out_dim=96, feature_sampler=BilinearSampler(), num_heads=num_heads, grid_scale=grid_scale, sample_point_per_axis=sp))
-        self.decoder_width =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=BilinearSampler(padding=0.1))
-        self.decoder_tsdf =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=BilinearSampler(padding=0.1))
-        self.feature_sampler = DeformableAttn(feature_dim=96, out_dim=96, feature_sampler=BilinearSampler(padding=0.1), num_heads=num_heads, grid_scale=grid_scale, sample_point_per_axis=sp)
+        self.decoder_qual =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=DeformableAttn(96, out_dim=96, feature_sampler=BilinearSampler(padding=0.1, plane_type=['xz', 'xy', 'yz']), num_heads=num_heads, grid_scale=grid_scale, sample_point_per_axis=sp))
+        self.decoder_width =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=BilinearSampler(padding=0.1, plane_type=['xz', 'xy', 'yz']))
+        self.decoder_tsdf =  LocalDecoder(dim=3, c_dim=96, out_dim=1, hidden_size=hidden_dim, feature_sampler=BilinearSampler(padding=0.1, plane_type=['xz', 'xy', 'yz']))
+        self.feature_sampler = DeformableAttn(feature_dim=96, out_dim=96, feature_sampler=BilinearSampler(padding=0.1, plane_type=['xz', 'xy', 'yz']), num_heads=num_heads, grid_scale=grid_scale, sample_point_per_axis=sp)
 
         
     def forward(self, inputs, p, target=None, p_tsdf=None):
