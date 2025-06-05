@@ -58,7 +58,7 @@ python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
 Run:
 
 ```bash
-python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed ｜ pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type igd --result-path /path/to/result
+python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type igd --result-path /path/to/result
 ```
 
 This commands will run experiment with each seed specified in the arguments.
