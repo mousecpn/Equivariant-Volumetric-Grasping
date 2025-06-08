@@ -1,4 +1,5 @@
-# Equivariance Makes Volumetric Grasping Great Again
+<!-- # Equivariance Makes Volumetric Grasping Great Again -->
+![logo](asset/logo.png)
 
 This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible for their pretrained checkpoint.
 
