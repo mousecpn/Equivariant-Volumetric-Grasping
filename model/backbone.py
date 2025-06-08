@@ -1,15 +1,11 @@
 from escnn.group import *
 from escnn.gspaces import *
 from escnn.nn import *
-from model.equi_layer import EquiDownConv, EquiUpConv, EquiSiLU, CyclicResBlock
+from model.equi_layer import EquiDownConv, EquiUpConv
 from model.equi_layer2d import EquiDownConv2d, EquiUpConv2d
 from model.unet import UNet
 import torch
 from torch import nn
-import numpy as np
-
-from scipy import stats
-import math
 
 import time
 from einops import rearrange

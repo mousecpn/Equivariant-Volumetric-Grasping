@@ -1,7 +1,7 @@
 <!-- # Equivariance Makes Volumetric Grasping Great Again -->
 ![logo](asset/logo.png)
 
-This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible for their pretrained checkpoint.
+This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible with their pretrained checkpoint.
 
 ## Introduction
 
@@ -10,7 +10,7 @@ This repo also contains a clean and simple implementation for [GIGA](https://git
 
 1. Create a conda environment.
 
-2. Install packages list in [requirements.txt](requirements.txt). Then install `torch-scatter` following [here](https://github.com/rusty1s/pytorch_scatter), based on `pytorch` version and `cuda` version.
+2. Install packages list in [requirements.txt](requirements.txt). Then install `torch-scatter` following [here](https://github.com/rusty1s/pytorch_scatter) (only for GIGA and IGD), based on `pytorch` version and `cuda` version.
 
 3. Go to the root directory and install the project locally using `pip`
 
@@ -27,10 +27,10 @@ pip install -e .
 Run:
 
 ```bash
-python train_equigiga.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
+./train.sh (giga | igd | equi_giga | equi_igd) --dataset /path/to/new/data --dataset_raw /path/to/raw/data --num_workers 12 --epochs 12 --batch_size 128
 ```
 
-### Train EquiIGD
+<!-- ### Train EquiIGD
 
 Run:
 
@@ -52,7 +52,7 @@ Run:
 
 ```bash
 python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
-```
+``` -->
 
 ## Validation
 
