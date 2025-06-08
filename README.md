@@ -17,7 +17,7 @@ This repo also contains a clean and simple implementation for [GIGA](https://git
 pip install -e .
 ```
 
-4. Data collection can be referred to [GIGA](https://github.com/UT-Austin-RPL/GIGA) or [OrbitGrasp](https://github.com/BoceHu/orbitgrasp). We will release our data collection code as soon as possible.
+4. Data collection can be referred to this [repo](https://github.com/mousecpn/grasp-data-collection).
 
 ## Training
 
@@ -58,7 +58,7 @@ python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
 Run:
 
 ```bash
-python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type igd --result-path /path/to/result
+python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type (giga | igd | equi_giga | equi_igd) --result-path /path/to/result
 ```
 
 This commands will run experiment with each seed specified in the arguments.
