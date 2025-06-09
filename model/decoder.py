@@ -650,29 +650,13 @@ class BilinearSampler(nn.Module):
             if self.concat_feat:
                 c = []
                 for plane in self.plane_type:
-                    c.append(self.sample_plane_feature(p, c_plane[plane], plane=plane))   #### 2025 02 24 xz xy yz => xy xz yz
-                # if 'grid' in plane_type:
-                #     c = self.sample_grid_feature(p, c_plane['grid'])
-                # if 'xy' in plane_type:
-                #     c.append(self.sample_plane_feature(p, c_plane['xy'], plane='xy'))   #### 2025 02 24 xz xy yz => xy xz yz
-                # if 'xz' in plane_type:
-                #     c.append(self.sample_plane_feature(p, c_plane['xz'], plane='xz'))
-                # if 'yz' in plane_type:
-                #     c.append(self.sample_plane_feature(p, c_plane['yz'], plane='yz'))       
+                    c.append(self.sample_plane_feature(p, c_plane[plane], plane=plane))   #### 2025 02 24 xz xy yz => xy xz yz    
                 c = torch.cat(c, dim=1)
                 c = c.transpose(1, 2)
             else:
                 c = 0
                 for plane in self.plane_type:
                     c += self.sample_plane_feature(p, c_plane[plane], plane=plane)
-                # if 'grid' in plane_type:
-                #     c += self.sample_grid_feature(p, c_plane['grid'])
-                # if 'xy' in plane_type:
-                #     c += self.sample_plane_feature(p, c_plane['xy'], plane='xy') 
-                # if 'xz' in plane_type:
-                #     c += self.sample_plane_feature(p, c_plane['xz'], plane='xz')
-                # if 'yz' in plane_type:
-                #     c += self.sample_plane_feature(p, c_plane['yz'], plane='yz')
                 c = c.transpose(1, 2)
         return c
     
