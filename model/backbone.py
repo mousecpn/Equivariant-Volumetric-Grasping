@@ -1,7 +1,7 @@
 from escnn.group import *
 from escnn.gspaces import *
 from escnn.nn import *
-from model.equi_layer import EquiDownConv, EquiUpConv
+from model.equi_layer3d import EquiDownConv, EquiUpConv
 from model.equi_layer2d import EquiDownConv2d, EquiUpConv2d
 from model.unet import UNet
 import torch

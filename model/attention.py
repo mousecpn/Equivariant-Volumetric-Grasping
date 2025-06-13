@@ -6,9 +6,6 @@ from einops import rearrange, repeat
 import numpy as np
 import matplotlib.pyplot as plt
 from utils.transform import quaternion_to_matrix, matrix_to_quaternion, rotation_6d_to_matrix, matrix_to_rotation_6d
-import math
-# from model.flash_attention import MultiheadFlashAttention as MultiheadCustomAttention
-from model.pos_encoding import RotaryPositionEncoding3D
 from model.decoder import BilinearSampler
 import escnn.nn as enn
 from escnn.gspaces import no_base_space, rot2dOnR2

@@ -18,7 +18,7 @@ import numpy as np
 
 from scipy import stats
 import time
-from model.equi_layer import EquiSiLU
+from model.equi_layer3d import EquiSiLU
 from model.equi_deform_conv import EquiScaleConv2d,EquiDeformConv2d
 from model.export_layers import *
 

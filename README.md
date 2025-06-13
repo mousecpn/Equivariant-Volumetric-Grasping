@@ -1,12 +1,30 @@
 <!-- # Equivariance Makes Volumetric Grasping Great Again -->
 ![logo](asset/logo.png)
 
-This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible with their pretrained checkpoint.
+This repo is the official implementation of the paper: Equivariance Makes Volumetric Grasping Great Again.
 
-## Introduction
+<p align="center">
+    <img src="asset/equi_real.png" alt="Equivariance" width="400">
+</p>
+
+## :star2: Highlights
+
+- An equivariant Triplane UNet for volumetric grasping
+
+- Deformable Steerable Convolution
+
+- This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible with their pretrained checkpoint.
+
+- The equivariant Version of GIGA (EquiGIGA) and IGD (EquiIGD)
+
+## :bulb: Key insight
+
+<p align="center">
+    <img src="asset/triequi.png" alt="insight" width="500">
+</p>
 
 
-## Installation
+## 🔧 Installation
 
 1. Create a conda environment.
 
@@ -21,10 +39,6 @@ pip install -e .
 4. Data collection can be referred to this [repo](https://github.com/mousecpn/grasp-data-collection).
 
 ## Training
-
-### Train EquiGIGA
-
-Run:
 
 ```bash
 ./train.sh (giga | igd | equi_giga | equi_igd) --dataset /path/to/new/data --dataset_raw /path/to/raw/data --num_workers 12 --epochs 12 --batch_size 128
@@ -56,8 +70,6 @@ python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
 
 ## Validation
 
-Run:
-
 ```bash
 python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type (giga | igd | equi_giga | equi_igd) --result-path /path/to/result
 ```
@@ -65,6 +77,12 @@ python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pi
 This commands will run experiment with each seed specified in the arguments.
 
 Run `python scripts/sim_grasp_multiple.py -h` to print a complete list of optional arguments.
+
+## 🙏 Acknowledgement
+- Data collection code from [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [OrbitGrasp](https://github.com/BoceHu/orbitgrasp).
+- Triplane UNet and Decoder are largely based on [GIGA](https://github.com/UT-Austin-RPL/GIGA).
+- Diffusion rotation decoders are from [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion).
+- Thanks to [ESCNN](https://github.com/QUVA-Lab/escnn) for their easy-to-use steerable convolution coding tutorials and tools.
 
 
 ## Citing
