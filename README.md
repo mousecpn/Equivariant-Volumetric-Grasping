@@ -9,13 +9,13 @@ This repo is the official implementation of the paper: Equivariance Makes Volume
 
 ## :star2: Highlights
 
-- An equivariant Triplane UNet for volumetric grasping
+- An [Equivariant Triplane UNet](model/triunet.py) for volumetric grasping
 
-- Deformable Steerable Convolution
+- [Deformable Steerable Convolution](model/equi_deform_conv.py)
 
 - This repo also contains a clean and simple implementation for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible with their pretrained checkpoint.
 
-- The equivariant Version of GIGA (EquiGIGA) and IGD (EquiIGD)
+- The equivariant Version of GIGA ([EquiGIGA](model/equi_giga.py)) and IGD ([EquiIGD](model/equi_igd.py))
 
 ## :bulb: Key insight
 
