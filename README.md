@@ -1,5 +1,8 @@
-<!-- # Equivariance Makes Volumetric Grasping Great Again -->
-![logo](asset/logo.png)
+<p align="center">
+    <img src="asset/logo.png" alt="Equivariance" width="200">
+</p>
+
+# Equivariance Makes Volumetric Grasping Great Again
 
 This repo is the official implementation of the paper: Equivariance Makes Volumetric Grasping Great Again.
 
