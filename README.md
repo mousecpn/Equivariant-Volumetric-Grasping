@@ -87,5 +87,12 @@ Run `python scripts/sim_grasp_multiple.py -h` to print a complete list of option
 
 
 ## Citing
-
+```
+@article{song2025equivariant,
+  title={Equivariant Volumetric Grasping},
+  author={Song, Pinhao and Hu, Yutong and Li, Pengteng and Detry, Renaud},
+  journal={arXiv preprint arXiv:2507.18847},
+  year={2025}
+}
+```
 
