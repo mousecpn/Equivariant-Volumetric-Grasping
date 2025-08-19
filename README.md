@@ -84,6 +84,7 @@ Run `python scripts/sim_grasp_multiple.py -h` to print a complete list of option
 - Triplane UNet and Decoder are largely based on [GIGA](https://github.com/UT-Austin-RPL/GIGA).
 - Diffusion rotation decoders are from [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion).
 - Thanks to [ESCNN](https://github.com/QUVA-Lab/escnn) for their easy-to-use steerable convolution coding tutorials and tools.
+- Thanks to [Haojie Huang](https://github.com/HaojHuang) for valuable discussion.
 
 
 ## Citing
