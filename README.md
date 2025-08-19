@@ -5,7 +5,7 @@ This repo is the official implementation of the paper: Equivariant Volumetric Gr
 [[Project](https://mousecpn.github.io/evg-page/)] [[Arxiv](https://arxiv.org/abs/2507.18847)] [[Realworld](https://github.com/mousecpn/fr3_grasp_ws)]
 
 <p align="center">
-    <img src="asset/equi_demo.png" alt="Equivariance" width="400">
+    <img src="asset/equi_demo.png" alt="Equivariance" width="600">
 </p>
 
 ## :star2: Highlights
@@ -21,7 +21,7 @@ This repo is the official implementation of the paper: Equivariant Volumetric Gr
 ## :bulb: Key insight
 
 <p align="center">
-    <img src="asset/triequi.gif" alt="insight" width="500">
+    <img src="asset/triequi.gif" alt="insight" width="1000">
 </p>
 
 
