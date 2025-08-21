@@ -39,7 +39,7 @@ pip install -e .
 
 4. Data collection can be referred to this [repo](https://github.com/mousecpn/grasp-data-collection).
 
-## Training
+## 📈 Training
 
 ```bash
 ./train.sh (giga | igd | equi_giga | equi_igd) --dataset /path/to/new/data --dataset_raw /path/to/raw/data --num_workers 12 --epochs 12 --batch_size 128
@@ -69,7 +69,7 @@ Run:
 python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
 ``` -->
 
-## Validation
+## 🎯 Validation
 
 ```bash
 python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type (giga | igd | equi_giga | equi_igd) --result-path /path/to/result
