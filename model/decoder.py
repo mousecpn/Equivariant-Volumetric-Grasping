@@ -3,8 +3,8 @@ import torch.nn as nn
 import escnn.nn as enn
 from escnn.group import so3_group, directsum, CyclicGroup, so2_group
 from escnn.gspaces import no_base_space
-import sys
-sys.path.append('/home/pinhao/IGDv2')
+# import sys
+# sys.path.append('/home/pinhao/IGDv2')
 from utils.common import normalize_coordinate, normalize_3d_coordinate
 import torch.nn.functional as F
 from escnn.nn import FieldType, GeometricTensor

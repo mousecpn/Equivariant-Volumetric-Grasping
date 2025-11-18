@@ -13,8 +13,8 @@ import matplotlib.path as mpath
 import time
 from einops import rearrange, reduce
 try:
-    from torchcfm.optimal_transport import OTPlanSampler
-    from torchcfm.conditional_flow_matching import ConditionalFlowMatcher
+    from model.flow_matching import OTPlanSampler
+    from model.flow_matching import ConditionalFlowMatcher
 except:
     pass
 

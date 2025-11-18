@@ -2,8 +2,8 @@ import numpy as np
 from scipy import ndimage
 import torch.utils.data
 from pathlib import Path
-import sys
-sys.path.append("/home/pinhao/IGDv2")
+# import sys
+# sys.path.append("/home/pinhao/IGDv2")
 from utils.io import *
 from utils.perception import *
 from utils.transform import Rotation, Transform
