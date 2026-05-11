@@ -12,8 +12,6 @@ This repo is the official implementation of the paper: Equivariant Volumetric Gr
 
 - An [Equivariant Triplane UNet](model/triunet.py) for volumetric grasping
 
-- [Deformable Steerable Convolution](model/equi_deform_conv.py)
-
 - This repo also contains **a clean and simple implementation** for [GIGA](https://github.com/UT-Austin-RPL/GIGA) and [IGD](https://github.com/mousecpn/Implicit-Grasp-Diffusion), which is compatible with their pretrained checkpoint.
 
 - The equivariant version of GIGA ([EquiGIGA](model/equi_giga.py)) and IGD ([EquiIGD](model/equi_igd.py))
@@ -72,7 +70,7 @@ python train_igd.py --dataset /path/to/new/data --dataset_raw /path/to/raw/data
 ## 🎯 Validation
 
 ```bash
-python scripts/sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type (giga | igd | equi_giga | equi_igd) --result-path /path/to/result
+python sim_grasp_multiple.py --num-view 1 --object-set (packed/test | pile/test) --scene (packed | pile) --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type (giga | igd | equi_giga | equi_igd) --result-path /path/to/result
 ```
 
 This commands will run experiment with each seed specified in the arguments.
