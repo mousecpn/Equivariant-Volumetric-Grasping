@@ -7,6 +7,85 @@ from utils.common import normalize_coordinate, normalize_3d_coordinate
 from utils.transform import quaternion_to_matrix, matrix_to_quaternion, rotation_6d_to_matrix, matrix_to_rotation_6d
 
 
+class ExportResBlock(nn.Module):
+    """
+    Standard PyTorch fallback for the 3D CyclicResBlock after export.
+    conv1 (with ReLU) -> residual; conv2 (with ReLU) -> conv3 (no act);
+    + residual; final non-linearity.
+    """
+    def __init__(self):
+        super(ExportResBlock, self).__init__()
+        self.conv1 = None
+        self.conv2 = None
+        self.conv3 = None
+        self.non_linearity = None
+
+    def forward(self, input):
+        out = self.conv1(input)
+        residual = out
+
+        out = self.conv2(out)
+        out = self.conv3(out)
+
+        out += residual
+        out = self.non_linearity(out)
+
+        return out
+
+
+class ExportEquiUnet3d(nn.Module):
+    """
+    Standard PyTorch fallback for the equivariant Abstract3DUNet after export.
+    Keeps the voxel<->repr coordinate transforms but strips GeometricTensor.
+    """
+    def __init__(self):
+        super(ExportEquiUnet3d, self).__init__()
+        self.encoders = None
+        self.decoders = None
+        self.final_conv = None
+        self.final_activation = None
+        self.testing = False
+        self.is_segmentation = False
+
+    def repr2voxel(self, repr):
+        shape_len = len(repr.shape)
+        repr = torch.flip(repr, (shape_len-3, shape_len-2))
+        voxel = rearrange(repr, "b c d w h -> b c h w d")
+        return voxel
+
+    def voxel2repr(self, voxel):
+        shape_len = len(voxel.shape)
+        if shape_len == 5:
+            repr = rearrange(voxel, "b c h w d -> b c d w h")
+        elif shape_len == 4:
+            repr = rearrange(voxel, "b h w d -> b d w h")
+        repr = torch.flip(repr, (shape_len-3, shape_len-2))
+        return repr
+
+    def forward(self, x):
+        if isinstance(x, torch.Tensor):
+            x = self.voxel2repr(x)
+
+        # encoder part
+        encoders_features = []
+        for encoder in self.encoders:
+            x = encoder(x)
+            encoders_features.insert(0, x)
+        encoders_features = encoders_features[1:]
+
+        # decoder part
+        for decoder, encoder_features in zip(self.decoders, encoders_features):
+            x = decoder(encoder_features, x)
+
+        x = self.final_conv(x)
+
+        if self.testing and self.final_activation is not None:
+            x = self.final_activation(x)
+
+        x = self.repr2voxel(x)
+        return x
+
+
 class ExportResBlock2d(nn.Module):
     def __init__(self, ):
         super(ExportResBlock2d, self).__init__()
@@ -14,27 +93,27 @@ class ExportResBlock2d(nn.Module):
         self.conv2 = None
         self.conv3 = None
         self.non_linearity = None
-    
+
     def forward(self, input):
         out = self.conv1(input)
         residual = out
-        
+
         out = self.conv2(out)
         out = self.conv3(out)
-        
+
         out += residual
         out = self.non_linearity(out)
-        
+
         return out
 
 
 class ExportDownConv2d(nn.Module):
     def __init__(self, ):
         super(ExportDownConv2d, self).__init__()
-        self.pooling = None        
+        self.pooling = None
         self.conv = None
         self.pool = None
-    
+
     def forward(self, x):
         if self.pool is not None:
             x = self.pool(x)
@@ -47,7 +126,7 @@ class ExportUpConv2d(nn.Module):
         self.merge_mode = None
         self.conv = None
         self.upconv = None
-    
+
     def forward(self, from_down, from_up):
         from_up = self.upconv(from_up)
         if self.merge_mode == 'add':
@@ -59,24 +138,24 @@ class ExportUpConv2d(nn.Module):
 
 class ExportCyclicUnet2d(nn.Module):
     def __init__(self, ):
-        super(ExportCyclicUnet2d, self).__init__()        
+        super(ExportCyclicUnet2d, self).__init__()
         self.encoders = None
-        self.decoders = None        
+        self.decoders = None
         self.final_conv = None
-    
+
     def forward(self, x):
         encoders_features = []
-        
+
         for i in range(len(self.encoders)):
             x = self.encoders[i](x)
             # reverse the encoder outputs to be aligned with the decoder
             encoders_features.insert(0, x)
-            
-        
+
+
         # remove the last encoder's output from the list
         # !!remember: it's the 1st in the list
         encoders_features = encoders_features[1:]
-        
+
         # decoder part
         for decoder, encoder_features in zip(self.decoders, encoders_features):
             # pass the output from the corresponding encoder and the output
@@ -84,7 +163,7 @@ class ExportCyclicUnet2d(nn.Module):
             x = decoder(encoder_features, x)
 
         x = self.final_conv(x)
-        
+
         return x
 
 class ExportJointTriUNet(nn.Module):
@@ -112,13 +191,13 @@ class ExportJointTriUNet(nn.Module):
             repr = rearrange(voxel, "b h w d -> b d w h")
         repr = torch.flip(repr, (shape_len-3, shape_len-2))
         return repr
-    
+
     def repr2voxel(self, repr):
         shape_len = len(repr.shape)
         repr = torch.flip(repr, (shape_len-3, shape_len-2))
         voxel = rearrange(repr, "b c d w h -> b c h w d")
         return voxel
-    
+
     def forward(self, x):
         if len(x.shape) == 4:
             x = x.unsqueeze(1)
@@ -132,49 +211,49 @@ class ExportJointTriUNet(nn.Module):
         batch_size, dim = c.shape[:2]
         c = c.reshape(batch_size, dim, -1)
         c = c.permute(0, 2, 1)
-        
+
         fea = {}
-        
+
         fea_plane = c.permute(0,2,1).reshape(-1, self.lifting_dim, self.reso_plane, self.reso_plane, self.reso_plane)
         # fea['xy'] = fea_plane.mean(-1)
         # fea['xz'] = fea_plane.mean(-2)
         # fea['yz']  = fea_plane.mean(-3)
         tri_feature = torch.stack((fea_plane.mean(-1),fea_plane.mean(-2),fea_plane.mean(-3)), dim=0)
-        
+
         encoders_features = []
-        
+
         for i in range(len(self.encoders_xy)):
             xy_feature = self.encoders_xy[i](tri_feature[0])
             xz_feature = self.down_convs[i](tri_feature[1])
             yz_feature = self.down_convs[i](tri_feature[2])
-            
+
             add_xy = (xz_feature.mean(-1)[:,:,:,None] + yz_feature.mean(-1)[:,:,None,:])
             xy_feature = torch.cat((xy_feature, add_xy), dim=1)
             xy_feature = self.side2xy_encoders[i](xy_feature)
-            
+
             tri_feature = torch.stack((xy_feature, xz_feature, yz_feature), dim=0)
-            
+
             # reverse the encoder outputs to be aligned with the decoder
             encoders_features.insert(0, tri_feature)
-            
-        
+
+
         # remove the last encoder's output from the list
         # !!remember: it's the 1st in the list
         encoders_features = encoders_features[1:]
-        
+
         # decoder part
         for i, (decoder_xy, encoder_features) in enumerate(zip(self.decoders_xy, encoders_features)):
             # pass the output from the corresponding encoder and the output
             # of the previous decoder
             xy_feature = decoder_xy(encoder_features[0], tri_feature[0])
-            
+
             xz_feature = self.up_convs[i](encoder_features[1], tri_feature[1])
             yz_feature = self.up_convs[i](encoder_features[2], tri_feature[2])
-            
+
             add_xy = (xz_feature.mean(-1)[:,:,:,None] + yz_feature.mean(-1)[:,:,None,:])
             xy_feature = torch.cat((xy_feature, add_xy), dim=1)
             xy_feature = self.side2xy_decoders[i](xy_feature)
-            
+
             tri_feature = torch.stack((xy_feature, xz_feature,yz_feature), dim=0)
 
         fea['xy'] = self.final_conv_xy(tri_feature[0])
@@ -182,9 +261,9 @@ class ExportJointTriUNet(nn.Module):
         fea['yz'] = self.conv_final(tri_feature[2])
 
         fea['xy'] = fea['xy'].permute(0,1,3,2)
-        fea['xz'] = fea['xz'].permute(0,1,3,2) 
+        fea['xz'] = fea['xz'].permute(0,1,3,2)
         fea['yz'] = fea['yz'].permute(0,1,3,2)   # from pixel coord to real coord
-        
+
         return fea
 
 class ExportEquiDeformConv(nn.Module):
@@ -206,28 +285,28 @@ class ExportEquiDeformConv(nn.Module):
         # scale2 = F.elu(offset[:, 3:4]) + 1
         shift = offset[:, :2].repeat(1, 9, 1, 1)
         ### debug ###
-        # basic_rot = unnormalized_vector_to_rot_matrix(offset[:, 4:]) 
-        
+        # basic_rot = unnormalized_vector_to_rot_matrix(offset[:, 4:])
+
         # basic_rot = offset[:, 4:].clip(-1,1)*(torch.pi/self.N)
         # basic_rot = theta_to_rot_matrix(basic_rot)
-        
-        
+
+
         _filter, _bias = self.conv.weight, self.conv.bias
         offset = torch.zeros_like(shift)
         scaled_offset = torch.zeros_like(self.base_offset*scale1)
         scaled_offset[:,self.mask1]  = self.base_offset[:,self.mask1] * scale1
         scaled_offset[:,self.mask2]  = self.base_offset[:,self.mask2] * scale2
         # scaled_offset = torch.einsum('badhw, bndhw->bnahw', basic_rot, scaled_offset.reshape(bs,-1,2,h,w)).reshape(bs,-1,h,w)
-        
+
         offset =  (scaled_offset - self.base_offset)  + shift
-        
+
         # offset[:, self.mask1] = shift[:,self.mask1] - self.base_offset[:,self.mask1] * (1 - scale1)
         # offset[:, self.mask2] = shift[:,self.mask2] -self.base_offset[:,self.mask2] * (1 - scale2)
         # offset = torch.einsum('badhw, bndhw->bnahw', basic_rot, offset.reshape(bs,-1,2,h,w)).reshape(bs,-1,h,w)
-        
+
         x = ops.deform_conv2d(x, offset, _filter, _bias, stride=self.conv.stride, padding=self.conv.padding)#, mask=modulator)
         return x
-    
+
 
 class ExportTriEquiDecoder(nn.Module):
     def __init__(self):
@@ -246,8 +325,8 @@ class ExportTriEquiDecoder(nn.Module):
         self.fc_p = None
         self.padding = 0
         self.sample_mode = 'bilinear'
-        
-    
+
+
     def query_feature(self, p, c_plane):
         if self.feature_sampler is not None:
             c = self.feature_sampler(p, c_plane)
@@ -265,12 +344,12 @@ class ExportTriEquiDecoder(nn.Module):
         # acutally trilinear interpolation if mode = 'bilinear'
         c = F.grid_sample(c, vgrid, padding_mode='border', align_corners=True, mode=self.sample_mode).squeeze(-1).squeeze(-1)
         return c
-    
+
     def forward(self, p, c_plane):
         batch_size, sample_size = p.shape[0], p.shape[1]
         c = self.query_feature(p, c_plane)
         valid_mask = ~(torch.isnan(p).all(-1))
-        
+
 
         c = c[valid_mask].reshape(-1, self.in_dim)
         c = self.act(self.lifting(c))
@@ -285,7 +364,7 @@ class ExportTriEquiDecoder(nn.Module):
             net = net + self.fc_c[i](c)
 
             net = self.blocks[i](net)
-        
+
         net = self.out_layer(net)
         out = torch.full((batch_size, sample_size, net.shape[-1]), float('nan')).to(net.device)
         out[valid_mask] = net
@@ -310,11 +389,11 @@ class ExportTimeEquiDecoder(nn.Module):
         self.sample_mode = 'bilinear'
         self.time_mlp = None
         self.t_dim = None
-    
+
     def query_feature(self, p, c_plane, extra_data=None):
         c = self.feature_sampler(p, c_plane)
         return c
-    
+
     def forward(self, data, c_plane, time):
         if isinstance(c_plane, dict):
             c = self.query_feature(data, c_plane)
@@ -325,13 +404,13 @@ class ExportTimeEquiDecoder(nn.Module):
             t = self.time_mlp(time.reshape(-1)).reshape(batch_size, 1,-1).repeat(1, sample_size, 1).reshape(batch_size*sample_size, self.t_dim)
         else:
             t = self.time_mlp(time.reshape(-1)).reshape(batch_size*sample_size,-1)
-        
+
 
         c = c.reshape(-1,self.in_dim)
         c = self.act(self.lifting(c))
         net = data.reshape(batch_size*sample_size, -1)
         net = self.fc_p(net)
-        
+
         c = torch.cat((c, t), dim=-1)
 
         for i in range(self.n_blocks):
@@ -354,14 +433,14 @@ class ExportEquiDeformableAttn(nn.Module):
         self.to_weight = None
         self.to_v = None
         self.to_out = None
-        
+
     def forward(self, query_pos, c):
         """
         query_pos: torch.tensor(bs, ns, 3)
         c: {'xz','xy','yz'}
         """
         bs, ns, _ = query_pos.shape
-        
+
         feature = self.feature_sampler(query_pos, c)
 
         feature = feature.reshape(bs*ns, -1)
@@ -371,17 +450,17 @@ class ExportEquiDeformableAttn(nn.Module):
 
         aux_sample_point = aux_sample_point_offset+query_pos.reshape(bs, ns, 1, 3)
         # return enn.GeometricTensor(aux_sample_point.reshape(-1, self.to_offset.out_type.size), self.to_offset.out_type)
-        
+
         self.sample_points = aux_sample_point
-                
+
         aux_feature_offset = self.feature_sampler(aux_sample_point.reshape(bs,-1, 3), c).reshape(bs*ns*self.num_samples, self.in_dim) # (bs*ns*sp*sp*sp, feature_dim)
-        
-        
+
+
         # return aux_feature_offset
         v = self.to_v(aux_feature_offset).reshape(bs*ns, self.num_samples, -1) # (bs*ns, sp*sp*sp, embed_dim)
-        
+
         out = (v * weight_offset).sum(-2)
-        
+
         out = out.reshape(-1, self.to_out_indim)
         out = self.to_out(out)
         ##### attention part #####
@@ -399,11 +478,11 @@ class ExportEquiGraspSO3DeformableAttn2(nn.Module):
         self.to_v = None
         self.to_out = None
         self.ncp = None
-        self.to_weight = None      
+        self.to_weight = None
         self.control_points = None
         self.zero_offset = None
         self.hidden_size = None
-    
+
     def forward(self, query_pos, c):
         """
         query_pos: torch.tensor(bs, ns, 7)
@@ -413,16 +492,16 @@ class ExportEquiGraspSO3DeformableAttn2(nn.Module):
         query_ori = query_pos[...,3:] # should be rot_6d
         query_pos = query_pos[...,:3]
         assert query_ori.shape[-1] == 6
-        
+
         # with torch.no_grad():
         feature = self.feature_sampler(query_pos, c).reshape(bs, ns, self.feature_dim) # (bs, ns, feature_dim)
-        
+
         # control points
         control_points = self.control_points # (1, ncp, 3)
         control_points = control_points.repeat(bs*ns,1,1).reshape(bs, ns, -1, 3)
-        
+
         # rotation
-        rot_SO3 = rotation_6d_to_matrix(query_ori).reshape(bs,ns,3,3) # (bs*ns, 3, 3) world2grasp   
+        rot_SO3 = rotation_6d_to_matrix(query_ori).reshape(bs,ns,3,3) # (bs*ns, 3, 3) world2grasp
         # control_points_ = control_points.clone()
         control_points = torch.einsum('bnpd,bngd->bngp', rot_SO3, control_points)
         # control_points = torch.einsum('bndp,bngd->bngp', rot_SO3, control_points)
@@ -430,7 +509,7 @@ class ExportEquiGraspSO3DeformableAttn2(nn.Module):
 
         # print_grasp(voxel_grid[0].detach().cpu().numpy(), rot_SO3[0,0].detach().cpu().numpy(), (query_pos[0,0].detach().cpu().numpy()+0.5)*0.3)
 
-                
+
         # feature fusion for offset
         if self.zero_offset:
             # with torch.no_grad():
@@ -442,24 +521,24 @@ class ExportEquiGraspSO3DeformableAttn2(nn.Module):
             anchor_sample_point = anchor_offset.unsqueeze(3)+anchor_sample_point.reshape(bs, ns, 1, -1, 3) # (bs, ns, num_heads, ncp, 3)
             # with torch.no_grad():
             sample_feature = self.feature_sampler(anchor_sample_point.reshape(bs,-1, 3), c).reshape(bs*ns,  -1, self.num_heads, self.feature_dim) # (bs, ns, ncp, num_heads, feature_dim)
-        
-        
+
+
 
         sample_feature = sample_feature.reshape(-1, self.feature_dim)
         feature = feature.reshape(-1, self.feature_dim)
         weights = self.to_weight(feature).reshape(bs*ns, self.ncp, self.num_heads, 1) # (bs*ns, ncp, n_heads, 1)
         # return feature
-        
+
         v = self.to_v(sample_feature).reshape(bs*ns,  -1, self.num_heads, self.hidden_size).transpose(1,2) # (bs*ns, ncp, n_heads, embed_dim)
-        
+
         out = (v * weights).sum((1,2))
         out = self.to_out(out)#.tensor.reshape(bs, ns, -1)
         out += feature#.tensor.reshape(out.shape)
 
         return out.reshape(bs, ns, -1)
-    
-    
-    
+
+
+
 class ExportEquiGraspSO3DeformableAttn(nn.Module):
     def __init__(self,):
         super().__init__()
@@ -471,14 +550,15 @@ class ExportEquiGraspSO3DeformableAttn(nn.Module):
         self.to_k = None
         self.to_out = None
         self.ncp = None
-        self.to_weight = None      
+        self.to_offset = None
         self.control_points = None
         self.zero_offset = None
         self.hidden_size = None
         self.pe_q = None
         self.pe_k = None
-    
-    
+        self.scale = None
+
+
     def forward(self, query_pos, c):
         """
         query_pos: torch.tensor(bs, ns, 7)
@@ -488,19 +568,19 @@ class ExportEquiGraspSO3DeformableAttn(nn.Module):
         query_ori = query_pos[...,3:] # should be rot_6d
         query_pos = query_pos[...,:3]
         assert query_ori.shape[-1] == 6
-        
+
         feature = self.feature_sampler(query_pos, c).reshape(bs, ns, self.feature_dim) # (bs, ns, feature_dim)
-        
+
         # control points
         control_points = self.control_points # (1, ncp, 3)
         control_points = control_points.repeat(bs*ns,1,1).reshape(bs, ns, -1, 3)
-        
+
         # rotation
-        rot_SO3 = rotation_6d_to_matrix(query_ori).reshape(bs,ns,3,3) # (bs*ns, 3, 3) world2grasp   
+        rot_SO3 = rotation_6d_to_matrix(query_ori).reshape(bs,ns,3,3) # (bs*ns, 3, 3) world2grasp
         control_points = torch.einsum('bnpd,bngd->bngp', rot_SO3, control_points)
         anchor_sample_point = query_pos.unsqueeze(2) + control_points # (bs, ns,ncp, 3)
 
-                
+
         # feature fusion for offset
         if self.zero_offset:
             # with torch.no_grad():
@@ -512,38 +592,335 @@ class ExportEquiGraspSO3DeformableAttn(nn.Module):
             anchor_sample_point = anchor_offset.unsqueeze(3)+anchor_sample_point.reshape(bs, ns, 1, -1, 3) # (bs, ns, num_heads, ncp, 3)
             # with torch.no_grad():
             sample_feature = self.feature_sampler(anchor_sample_point.reshape(bs,-1, 3), c).reshape(bs*ns,  -1, self.num_heads, self.feature_dim) # (bs, ns, ncp, num_heads, feature_dim)
-        
-        
+
+
 
         sample_feature = sample_feature.reshape(-1, self.feature_dim)
         feature = feature.reshape(-1, self.feature_dim)
         # return feature
-        
-        k = self.to_k(sample_feature).tensor.reshape(bs*ns,  -1, self.num_heads, self.hidden_size).transpose(1,2) # (bs*ns, ncp, n_heads, embed_dim)
-        v = self.to_v(sample_feature).tensor.reshape(bs*ns,  -1, self.num_heads, self.hidden_size).transpose(1,2) # (bs*ns, ncp, n_heads, embed_dim)
-        
-        q = self.to_q(feature).tensor.reshape(bs*ns, 1, self.hidden_size).unsqueeze(1).repeat(1, self.num_heads, 1, 1) # (bs*ns, n_heads, 1, embed_dim)
-        
+
+        k = self.to_k(sample_feature).reshape(bs*ns,  -1, self.num_heads, self.hidden_size).transpose(1,2) # (bs*ns, ncp, n_heads, embed_dim)
+        v = self.to_v(sample_feature).reshape(bs*ns,  -1, self.num_heads, self.hidden_size).transpose(1,2) # (bs*ns, ncp, n_heads, embed_dim)
+
+        q = self.to_q(feature).reshape(bs*ns, 1, self.hidden_size).unsqueeze(1).repeat(1, self.num_heads, 1, 1) # (bs*ns, n_heads, 1, embed_dim)
+
         q = q + self.pe_q.reshape(1,1,1,-1)
         k = k + self.pe_k.reshape(1, 1, self.ncp, -1)
 
-        
+
         q = q / self.scale
-        
+
         sim = torch.einsum('b n i d, b n j d -> b n i j', q, k) # (bs*ns, n_heads, 1, sp*sp*sp)
-        
+
         sim = sim - sim.amax(dim = -1, keepdim = True).detach()
-        
+
         attn = sim.softmax(dim = -1)
-        
+
         # attn = self.dropout_layer(attn) # (bs*ns, n_heads, 1, sp*sp*sp)
-        
-        
+
+
         out = torch.einsum('b n i j, b n j d -> b n i d', attn, v).transpose(1,2).reshape(bs*ns,-1) # (bs, ns, n_heads*embed_dim)
-        
+
         out = self.to_out(out)#.tensor.reshape(bs, ns, -1)
         out += feature#.tensor.reshape(out.shape)
-        
+
 
         # out = torch.cat((feature, aux_feature_offset),dim=1).reshape(bs, ns, -1)
         return out.reshape(bs, ns, -1)
+
+
+
+class ExportCyclicUnet3d(nn.Module):
+    """
+    用于承载 CyclicUnet3d 导出后标准 PyTorch 操作的类
+    去除了 GeometricTensor 的包装，直接对张量进行前向传播
+    """
+    def __init__(self):
+        super(ExportCyclicUnet3d, self).__init__()
+        self.lifting = None
+        self.act = None
+        self.encoders = None
+        self.decoders = None
+        self.final_conv = None
+
+    def repr2voxel(self, repr):
+        shape_len = len(repr.shape)
+        repr = torch.flip(repr, (shape_len-3, shape_len-2))
+        voxel = rearrange(repr, "b c d w h -> b c h w d")
+        return voxel
+
+    def voxel2repr(self, voxel):
+        shape_len = len(voxel.shape)
+        if shape_len == 5:
+            repr = rearrange(voxel, "b c h w d -> b c d w h")
+        elif shape_len == 4:
+            repr = rearrange(voxel, "b h w d -> b d w h")
+        repr = torch.flip(repr, (shape_len-3, shape_len-2))
+        return repr
+
+    def forward(self, x):
+        if isinstance(x, torch.Tensor):
+            x = self.voxel2repr(x)
+
+        x = self.act(self.lifting(x))
+        # encoder part
+        encoders_features = []
+
+        for i in range(len(self.encoders)):
+            x = self.encoders[i](x)
+            encoders_features.insert(0, x)
+
+        encoders_features = encoders_features[1:]
+
+        # decoder part
+        for decoder, encoder_features in zip(self.decoders, encoders_features):
+            x = decoder(encoder_features, x)
+
+        x = self.final_conv(x)
+        x = self.repr2voxel(x)
+
+        x = {'grid': x}
+
+        return x
+
+
+class ExportEquiDownConv(nn.Module):
+    """
+    Standard PyTorch fallback for EquiDownConv after export.
+    """
+    def __init__(self):
+        super(ExportEquiDownConv, self).__init__()
+        self.pooling = False
+        self.pool = None
+        self.conv = None
+
+    def forward(self, x):
+        if self.pooling and self.pool is not None:
+            x = self.pool(x)
+        x = self.conv(x)
+        return x
+
+
+class ExportEquiUpConv(nn.Module):
+    """
+    Standard PyTorch fallback for EquiUpConv after export.
+    """
+    def __init__(self):
+        super(ExportEquiUpConv, self).__init__()
+        self.merge_mode = 'add'
+        self.upconv = None
+        self.conv = None
+
+    def forward(self, from_down, from_up):
+        from_up = self.upconv(from_up)
+        if self.merge_mode == 'add':
+            x = from_up + from_down
+        x = self.conv(x)
+        return x
+
+
+class ExportEquivariantResBlock2d(nn.Module):
+    """
+    Standard PyTorch fallback for _EquivariantResBlock2d after export.
+    """
+    def __init__(self):
+        super(ExportEquivariantResBlock2d, self).__init__()
+        self.conv1 = None
+        self.conv2 = None
+        self.conv3 = None
+        self.activation = None
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.activation(out)
+        residual = out
+        out = self.conv2(out)
+        out = self.activation(out)
+        out = self.conv3(out)
+        out = out + residual
+        return self.activation(out)
+
+
+class ExportEquivariantDown2d(nn.Module):
+    """
+    Standard PyTorch fallback for _EquivariantDown2d after export.
+    """
+    def __init__(self):
+        super(ExportEquivariantDown2d, self).__init__()
+        self.pool = None
+        self.block = None
+
+    def forward(self, x):
+        if self.pool is not None:
+            x = self.pool(x)
+        return self.block(x)
+
+
+class ExportEquivariantUp2d(nn.Module):
+    """
+    Standard PyTorch fallback for _EquivariantUp2d after export.
+    """
+    def __init__(self):
+        super(ExportEquivariantUp2d, self).__init__()
+        self.up = None
+        self.block = None
+
+    def forward(self, from_down, from_up):
+        up = self.up(from_up)
+        merged = torch.cat((up, from_down), dim=1)
+        return self.block(merged)
+
+
+class ExportInducedJointTriUNet(nn.Module):
+    """
+    Standard PyTorch fallback for InducedJointTriUNet after export.
+
+    Replicates the forward pass of the induced-representation tri-plane UNet
+    using only plain PyTorch modules (no GeometricTensor wrapping).
+    """
+    def __init__(self):
+        super(ExportInducedJointTriUNet, self).__init__()
+        self.lifting = None
+        self.side_input_adapter = None
+        self.encoders_xy = None
+        self.encoders_vertical = None
+        self.shared_encoders = None
+        self.side2xy_encoders = None
+        self.decoders_xy = None
+        self.decoders_vertical = None
+        self.shared_decoders = None
+        self.side2xy_decoders = None
+        self.final_conv_xy = None
+        self.final_conv_vertical = None
+        self.final_conv_shared = None
+        self.lifting_dim = None
+        self.reso_plane = None
+        self.padding = None
+        self.plane_type = None
+        self.feature_sampler = None
+        # Whether the side-to-XY fusion layers are present.  Mirrors
+        # `InducedJointTriUNet.use_side2xy` after export.
+        self.use_side2xy = True
+        # If true, all three planes are processed by one unconstrained 2D
+        # UNet.  The same module is called on the planes concatenated along
+        # the batch axis, making weight sharing explicit and avoiding three
+        # separately registered copies of the parameters.
+        self.share_plane_unet = False
+        self.register_buffer("yz_gauge", None)
+
+    @staticmethod
+    def voxel2repr(voxel):
+        ndim = voxel.ndim
+        if ndim == 5:
+            representation = rearrange(voxel, "b c h w d -> b c d w h")
+        elif ndim == 4:
+            representation = rearrange(voxel, "b h w d -> b d w h")
+        else:
+            raise ValueError(f"expected a 4D or 5D voxel tensor, got {voxel.shape}")
+        return torch.flip(representation, (ndim - 3, ndim - 2))
+
+    @staticmethod
+    def repr2voxel(representation):
+        tensor = torch.flip(
+            representation, (representation.ndim - 3, representation.ndim - 2)
+        )
+        return rearrange(tensor, "b c d w h -> b c h w d")
+
+    @staticmethod
+    def _side_to_xy(xz, yz):
+        """Lift an induced side pair to a regular-C4 XY feature field."""
+        if xz.shape != yz.shape or xz.shape[1] % 2:
+            raise ValueError("side tensors must match and contain regular C2 fields")
+        batch, channels, _, size = xz.shape
+        fields = channels // 2
+        # Side layout is [B, C, Z, U]; integrate Z and retain U.
+        xz = xz.mean(dim=-2).reshape(batch, fields, 2, size)
+        yz = yz.mean(dim=-2).reshape(batch, fields, 2, size)
+        xz_e = xz[:, :, 0, :, None].expand(-1, -1, -1, size)
+        yz_e = yz[:, :, 0, None, :].expand(-1, -1, size, -1)
+        xz_h = xz[:, :, 1, :, None].expand(-1, -1, -1, size)
+        yz_h = yz[:, :, 1, None, :].expand(-1, -1, size, -1)
+        return torch.stack((xz_e, yz_e, xz_h, yz_h), dim=2).reshape(
+            batch, 4 * fields, size, size
+        )
+
+    def forward(self, x):
+        if x.ndim == 4:
+            x = x.unsqueeze(1)
+        x = self.voxel2repr(x)
+
+        # Acquire voxel-wise feature
+        c = self.lifting(x)
+        c = self.repr2voxel(c)
+        batch_size, dim = c.shape[:2]
+        c = c.reshape(batch_size, dim, -1)
+        c = c.permute(0, 2, 1)
+
+        fea_plane = c.permute(0, 2, 1).reshape(
+            -1, self.lifting_dim, self.reso_plane, self.reso_plane, self.reso_plane
+        )
+        xy = fea_plane.mean(-1)
+        xz = fea_plane.mean(-2).transpose(-1, -2)
+        yz = fea_plane.mean(-3).transpose(-1, -2)
+        yz = torch.einsum("oi,bihw->bohw", self.yz_gauge, yz)
+        xz = self.side_input_adapter(xz)
+        yz = self.side_input_adapter(yz)
+
+        skip_connections = []
+        if self.share_plane_unet:
+            encoder_iter = enumerate(self.shared_encoders)
+        else:
+            encoder_iter = enumerate(zip(self.encoders_xy, self.encoders_vertical))
+
+        for level, encoder in encoder_iter:
+            if self.share_plane_unet:
+                # A single call is equivalent to three calls with shared
+                # weights, and also makes FLOPs accounting unambiguous.
+                xy, xz, yz = encoder(torch.cat((xy, xz, yz), dim=0)).chunk(3, dim=0)
+            else:
+                xy_encoder, side_encoder = encoder
+                xy = xy_encoder(xy)
+                xz = side_encoder(xz)
+                yz = side_encoder(yz)
+            if self.use_side2xy:
+                side_on_xy = self._side_to_xy(xz, yz)
+                fusion = self.side2xy_encoders[level]
+                xy = fusion(torch.cat((xy, side_on_xy), dim=1))
+            skip_connections.insert(0, (xy, xz, yz))
+
+        if self.share_plane_unet:
+            decoder_iter = enumerate(self.shared_decoders)
+        else:
+            decoder_iter = enumerate(zip(self.decoders_xy, self.decoders_vertical))
+
+        for level, decoder in decoder_iter:
+            skip_xy, skip_xz, skip_yz = skip_connections[level + 1]
+            if self.share_plane_unet:
+                from_down = torch.cat((skip_xy, skip_xz, skip_yz), dim=0)
+                from_up = torch.cat((xy, xz, yz), dim=0)
+                xy, xz, yz = decoder(from_down, from_up).chunk(3, dim=0)
+            else:
+                xy_decoder, side_decoder = decoder
+                xy = xy_decoder(skip_xy, xy)
+                xz = side_decoder(skip_xz, xz)
+                yz = side_decoder(skip_yz, yz)
+            if self.use_side2xy:
+                side_on_xy = self._side_to_xy(xz, yz)
+                fusion = self.side2xy_decoders[level]
+                xy = fusion(torch.cat((xy, side_on_xy), dim=1))
+
+        if self.share_plane_unet:
+            xy, xz, yz = self.final_conv_shared(
+                torch.cat((xy, xz, yz), dim=0)
+            ).chunk(3, dim=0)
+        else:
+            xy = self.final_conv_xy(xy)
+            xz = self.final_conv_vertical(xz)
+            yz = self.final_conv_vertical(yz)
+
+        # Convert pixel convention back to the repository's real-coordinate grids.
+        return {
+            "xy": xy.permute(0, 1, 3, 2),
+            "xz": xz,
+            "yz": yz,
+        }

@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 
 from dataset.dataset_voxel import DatasetVoxelOccFile
-from model.equi_igd import TriEquiIGD
+from model.equi_igd import TriEquiIGDInduce
 
 
 LOSS_KEYS = ['loss_all', 'loss_qual', 'loss_rot', 'loss_width', 'loss_occ']
@@ -44,7 +44,7 @@ def main(args):
         args.dataset, args.dataset_raw, args.batch_size, args.val_split, args.augment, kwargs)
     
     # build the network or load
-    net = TriEquiIGD().to(device)
+    net = TriEquiIGDInduce().to(device)
     if args.load_path != '':
         net.load_state_dict(torch.load(args.load_path, map_location=device))
 

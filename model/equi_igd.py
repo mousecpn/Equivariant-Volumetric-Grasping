@@ -1,284 +1,212 @@
-import torch
-import torch.nn as nn
-import os
-import sys
-cur_file = os.path.abspath(__file__)
-cur_dir  = os.path.dirname(cur_file)
-parent_dir = os.path.dirname(cur_dir)
-sys.path.insert(0, parent_dir)
-from model.backbone import CyclicUnet3d, Tri_UNet
-from model.triunet import JointTriUNet 
-from model.decoder import BilinearSampler, TriFullEquiDecoder, TriTimeEquiDecoder, TimeLocalDecoder
-import escnn.nn as enn
-from escnn.group import CyclicGroup
-from escnn.nn import FieldType, GeometricTensor
-from escnn.gspaces import no_base_space, rot2dOnR2
-import torch.nn.functional as F
-from utils.transform import matrix_to_quaternion,quaternion_to_matrix,rotation_6d_to_matrix,matrix_to_rotation_6d, irreps2rot, rot2irreps, padding, Rotation, Transform, negative_sampling
-import time
-from scipy import stats
+"""Induced-representation equivariant implicit grasp diffusion model."""
+
 import numpy as np
-from model.diffusion import Diffusion,FlowMatching
-from model.attention import EquiDeformableAttn, EquiGraspSO3DeformableAttn, EquiDeformableAttn2,EquiGraspSO3DeformableAttn2
-from utils.loss import *
+import torch
+import torch.nn.functional as F
+from torch import nn
+from escnn.group import CyclicGroup
+from escnn.gspaces import no_base_space
+from escnn.nn import FieldType
 
-class TriEquiIGD(nn.Module):
-    def __init__(self):
-        super(TriEquiIGD, self).__init__()
-        self._init = 'he'
-        self.N = 4
+from model.attention import EquiDeformableAttn2, EquiGraspSO3DeformableAttn
+from model.decoder import TriFullEquiDecoder, TriTimeEquiDecoder
+from model.diffusion import FlowMatching
+from model.triunet_induced import InducedBilinearSampler, JointTriUNetInduced
+from utils.loss import occ_loss_fn, rot_loss_fn, sigmoid_focal_loss, width_loss_fn
+from utils.transform import (
+    Rotation,
+    matrix_to_quaternion,
+    matrix_to_rotation_6d,
+    quaternion_to_matrix,
+    irreps2rot,
+    rot2irreps,
+    rotation_6d_to_matrix,
+)
+
+
+def gaussian_filter_3d(values, spatial_shape, sigma=1.0, truncate=4.0):
+    if sigma <= 0:
+        return values
+    radius = int(truncate * sigma + 0.5)
+    coordinates = torch.arange(-radius, radius + 1, device=values.device, dtype=values.dtype)
+    kernel = torch.exp(-(coordinates ** 2) / (2 * sigma ** 2))
+    kernel = kernel / kernel.sum()
+    volume = values.reshape(values.shape[0], 1, *spatial_shape)
+    for dimension in range(3):
+        kernel_shape = [1, 1, 1]
+        kernel_shape[dimension] = kernel.numel()
+        axis_kernel = kernel.reshape(1, 1, *kernel_shape)
+        padding = [0, 0, 0, 0, 0, 0]
+        padding[2 * (2 - dimension):2 * (2 - dimension) + 2] = [radius, radius]
+        volume = F.conv3d(F.pad(volume, padding, mode="replicate"), axis_kernel)
+    return volume.reshape_as(values)
+
+
+def negative_sampling(grasp, rotation=True):
+    """Generate translation and optional yaw perturbations for grasp scoring."""
+    samples = []
+    for _ in range(10):
+        translated = grasp.clone()
+        translated[..., :3] += torch.randn_like(translated[..., :3]) * 0.1
+        samples.append(translated)
+    if rotation:
+        for yaw in np.linspace(0.0, np.pi, 5)[1:-1]:
+            rotated = grasp.clone()
+            base = Rotation.from_matrix(
+                rotation_6d_to_matrix(grasp[..., 3:]).reshape(-1, 3, 3).detach().cpu().numpy()
+            )
+            delta = Rotation.from_euler("z", yaw)
+            matrices = torch.from_numpy((base * delta).as_matrix().astype("float32")).to(grasp.device)
+            rotated[..., 3:] = matrix_to_rotation_6d(matrices.reshape(*grasp.shape[:2], 3, 3))
+            samples.append(rotated)
+    negatives = torch.cat(samples, dim=1)
+    return negatives, torch.zeros_like(negatives[..., 0])
+
+
+class TriEquiIGDInduce(nn.Module):
+    """C4-equivariant IGD with an induced XZ/YZ tri-plane representation."""
+
+    def __init__(self, N=4, s2tp=True, mix_repr=True):
+        super().__init__()
+        if N != 4:
+            raise ValueError("TriEquiIGDInduce currently supports N=4 only")
+
+        self.N = N
         hidden_dim = 32
-        self.gs = no_base_space(CyclicGroup(self.N))
-        self.backbone = JointTriUNet(in_channel=1, hidden_dim=hidden_dim, depth=3, N=self.N, plane_resolution=40)
-        # self.backbone = Tri_UNet(in_channel=1, hidden_dim=hidden_dim, depth=3, N=self.N)
-        decoder_in_type = FieldType(self.gs, [self.gs.regular_repr]*(hidden_dim//self.N) + [self.gs.trivial_repr]*hidden_dim*2)
-        
-        decoder_hidden_dim = 128
-        mixed_repr = [self.gs.regular_repr] + [self.gs.trivial_repr]*8
-        hidden_type = FieldType(self.gs, mixed_repr*(decoder_hidden_dim//16))
+        self.gs = no_base_space(CyclicGroup(N))
+        self.backbone = JointTriUNetInduced(
+            in_channel=1, hidden_dim=hidden_dim, depth=3, N=N,
+            plane_resolution=40, s2tp=s2tp,
+        )
+        decoder_in_type = FieldType(self.gs, [self.gs.regular_repr] * (3 * hidden_dim // N))
+        mixed_repr = [self.gs.regular_repr] + [self.gs.trivial_repr] * 8
+        hidden_type = FieldType(self.gs, mixed_repr * (3 * hidden_dim // (8 + N))) if mix_repr else decoder_in_type
+        scalar_type = FieldType(self.gs, [self.gs.irrep(0)])
+        self.irrep_3x2 = FieldType(self.gs, [self.gs.irrep(1)] * 3)
+        sampler = InducedBilinearSampler()
 
-        irrep_0 = FieldType(self.gs, [self.gs.irrep(0)])
-        self.irrep_3x2 = FieldType(self.gs, [self.gs.irrep(1)]*3)
+        quality_sampler = EquiDeformableAttn2(decoder_in_type)
+        quality_sampler.feature_sampler = sampler
+        grasp_sampler = EquiGraspSO3DeformableAttn(decoder_in_type, hidden_type)
+        grasp_sampler.feature_sampler = sampler
+        rotation_sampler = EquiDeformableAttn2(decoder_in_type)
+        rotation_sampler.feature_sampler = sampler
 
-        self.decoder_qual = TriFullEquiDecoder(in_type=decoder_in_type, out_type=irrep_0, N=self.N, hidden_size=64, feature_sampler=EquiDeformableAttn2(decoder_in_type))
-        self.decoder_grasp_qual = TriFullEquiDecoder(in_type=decoder_in_type, out_type=irrep_0,  N=self.N, hidden_size=64, feature_sampler=EquiGraspSO3DeformableAttn(decoder_in_type, hidden_type))
-        self.decoder_width = TriFullEquiDecoder(in_type=decoder_in_type, out_type=irrep_0, N=self.N, hidden_size=64, feature_sampler=BilinearSampler())
-        self.decoder_rot = TriTimeEquiDecoder(in_type=decoder_in_type, out_type=self.irrep_3x2, N=self.N, hidden_size=hidden_type)
-        self.decoder_rot.feature_sampler = EquiDeformableAttn2(decoder_in_type) #, concat_type=(self.decoder_rot.out_type+self.decoder_rot.t_type)
+        self.decoder_qual = TriFullEquiDecoder(decoder_in_type, scalar_type, N=N, hidden_size=64, feature_sampler=quality_sampler)
+        self.decoder_grasp_qual = TriFullEquiDecoder(decoder_in_type, scalar_type, N=N, hidden_size=64, feature_sampler=grasp_sampler)
+        self.decoder_width = TriFullEquiDecoder(decoder_in_type, scalar_type, N=N, hidden_size=64, feature_sampler=sampler)
+        self.decoder_rot = TriTimeEquiDecoder(decoder_in_type, self.irrep_3x2, N=N, hidden_size=hidden_type)
+        self.decoder_rot.feature_sampler = rotation_sampler
+        self.decoder_tsdf = TriFullEquiDecoder(decoder_in_type, scalar_type, N=N, hidden_size=64, feature_sampler=sampler)
+        self.grasp_sampler = FlowMatching(condition_mask=[0, 0, 0, 0, 0, 0], denosing_steps=10)
 
-        self.decoder_tsdf = TriFullEquiDecoder(in_type=decoder_in_type, out_type=irrep_0, N=self.N, hidden_size=64, feature_sampler=BilinearSampler()) 
-        self.grasp_sampler = FlowMatching(condition_mask=[0,0,0,0,0,0], denosing_steps=10)
-        
-        
-    def forward(self, inputs, p, target=None, p_tsdf=None):
-        if isinstance(p, dict):
-            self.batch_size = p['p'].size(0)
-            self.sample_num = p['p'].size(1)
+    def compute_loss(self, inputs, points, target, p_tsdf, validate=False):
+        self.batch_size, self.sample_num = points.shape[:2]
+        labels, rotations, widths, occupancy = target
+        features = self.backbone(inputs)
+        quality = self.decoder_qual(points, features)
+        negative_points, negative_labels = negative_sampling(points, rotation=False)
+        negative_quality = self.decoder_qual(negative_points, features)
+        loss_quality = sigmoid_focal_loss(
+            torch.cat((quality.flatten(), negative_quality.flatten())),
+            torch.cat((labels.flatten(), negative_labels.flatten())),
+            sigmoid=False, reduction="mean", smoothing=0.1,
+        )
+
+        width = self.decoder_width(points, features)
+        tsdf = self.decoder_tsdf(p_tsdf, features)
+        rotation_6d = matrix_to_rotation_6d(quaternion_to_matrix(rotations))
+        rotation_irreps = rot2irreps(rotation_6d)
+        selected_rotation = rotation_6d[:, np.random.randint(0, 2)].unsqueeze(1)
+        grasp = torch.cat((points, selected_rotation), dim=-1)
+        grasp_quality = self.decoder_grasp_qual(grasp, features)
+        negative_grasps, negative_grasp_labels = negative_sampling(grasp)
+        negative_grasp_quality = self.decoder_grasp_qual(negative_grasps, features)
+        loss_grasp = sigmoid_focal_loss(
+            torch.cat((grasp_quality.flatten(), negative_grasp_quality.flatten())),
+            torch.cat((labels.flatten(), negative_grasp_labels.flatten())),
+            sigmoid=False, reduction="mean", smoothing=0.1,
+        )
+
+        positive = labels == 1
+        if positive.any():
+            context = self.decoder_rot.query_feature(points, features)[positive]
+            if validate:
+                noise = torch.rand(context.shape[0], 1, 6, device=points.device)
+                sampled = self.grasp_sampler.sample_data(noise, context, self.decoder_rot)
+                sampled_rotation = matrix_to_quaternion(rotation_6d_to_matrix(irreps2rot(sampled))).squeeze(1)
+                loss_rotation = rot_loss_fn(sampled_rotation, rotations[positive]).mean()
+            else:
+                loss_rotation = self.grasp_sampler.loss_fn(
+                    self.decoder_rot,
+                    {"data": rotation_irreps[positive], "context": context.repeat(1, rotation_irreps.shape[1], 1)},
+                ).mean()
+            loss_width = width_loss_fn(width[positive].reshape(-1), widths[positive]).mean()
         else:
-            self.batch_size = p.size(0)
-            self.sample_num = p.size(1)
-        
-        if target is None:
-            return self.inference(inputs, p, sample_rounds=1)
-            
-        
-        label, rot_gt, width_gt, occ_value = target
-        rot_gt_6d = matrix_to_rotation_6d(quaternion_to_matrix(rot_gt[:, np.random.randint(0,2), :].unsqueeze(1)))
-        rot_irreps = rot2irreps(rot_gt_6d)
-        grasp = torch.cat((p, rot_irreps), dim=-1)
-        
-        
-        c = self.backbone(inputs)
-        qual = self.decoder_qual(p, c)
-        # grasp_qual = self.decoder_grasp_qual(grasp, c)
-        width = self.decoder_width(p, c)
-        noise = torch.rand((self.batch_size, self.sample_num, len(self.grasp_sampler.condition_mask)), device=p.device)
-        irreps = self.grasp_sampler.sample_data(noise, self.decoder_rot.query_feature(p, c), self.decoder_rot)
-        rot = irreps2rot(irreps)
-        rot = matrix_to_quaternion(rotation_6d_to_matrix(rot))
+            loss_rotation = torch.zeros((), device=points.device)
+            loss_width = torch.zeros((), device=points.device)
 
-        if p_tsdf is not None:
-            tsdf = self.decoder_tsdf(p_tsdf, c)
-            return qual, rot, width, tsdf
-        else:
-            return qual, rot, width
-    
-    
+        loss_occupancy = occ_loss_fn(tsdf, occupancy, 0.1).mean()
+        loss = loss_quality + loss_grasp + loss_rotation + 0.01 * loss_width + loss_occupancy
+        loss_dict = {
+            "loss_qual": loss_quality,
+            "loss_grasp": loss_grasp,
+            "loss_rot": loss_rotation,
+            "loss_width": loss_width,
+            "loss_occ": loss_occupancy,
+            "loss_all": loss,
+        }
+        prediction_rotation = rotations[:, :1]
+        if validate and positive.any():
+            prediction_rotation = sampled_rotation.unsqueeze(1)
+        return loss, loss_dict, ((quality.sigmoid() * grasp_quality.sigmoid()).sqrt(), prediction_rotation, width, tsdf)
+
     @torch.no_grad()
-    def inference(self, inputs, p, sample_rounds = 1, low_th=0.05, **kwargs):
-        assert self.batch_size==1, "batch size should be 1 in this mode" 
-        # visualize_tsdf(inputs.cpu().numpy()[0])
-        c = self.backbone(inputs)
-        qual = self.decoder_qual(p, c).sigmoid()
-        width = self.decoder_width(p, c)
-        dim = len(self.grasp_sampler.condition_mask)
-                        
-        mask = (qual > low_th)
-        
-        p_postive = p[mask].reshape(1, -1, 3)
-        feature_positive = self.decoder_rot.query_feature(p_postive, c)
-        
-        # loop mode
-        for i in range(sample_rounds):
-            noise = torch.rand((self.batch_size, p_postive.shape[1], dim), device=p.device)
-            rot_6d = irreps2rot(self.grasp_sampler.sample_data(noise, feature_positive, self.decoder_rot))
-            grasp = torch.cat((p_postive, rot_6d), dim=-1)
-            grasp_qual = self.decoder_grasp_qual(grasp, c)
-            if i == 0:
-                last_rot = rot_6d
-                last_grasp_qual = grasp_qual
-                continue
-            comparing_grasp_qual = torch.stack((last_grasp_qual, grasp_qual), dim=1) # (bs, 2, pos_ns)
-            comparing_rot = torch.stack((last_rot, rot_6d), dim=1) # (bs, 2, pos_ns, 7)
-            last_grasp_qual, indices = torch.max(comparing_grasp_qual, dim=1)
-            indices = indices.reshape(self.batch_size, 1, -1, 1).repeat(1,1,1,dim)
-            last_rot = comparing_rot.reshape(self.batch_size, 2, -1, dim).gather(1, indices)
-            last_rot = last_rot.squeeze(1)
-    
-        rot = torch.randn(self.batch_size, p.shape[1], 4).to(last_rot.device)
-        
-        rot[mask] = matrix_to_quaternion(rotation_6d_to_matrix(last_rot.reshape(-1,dim)))
-        grasp_qual = torch.zeros_like(qual)
-        grasp_qual[mask] = torch.sigmoid(last_grasp_qual.reshape(-1))
-                
-        qual = (qual*grasp_qual).sqrt()
-        
-        return qual, rot, width
-    
-    
-    def compute_loss(self, inputs, p, target, p_tsdf, validate=False):
-        if isinstance(p, dict):
-            self.batch_size = p['p'].size(0)
-            self.sample_num = p['p'].size(1)
-        else:
-            self.batch_size = p.size(0)
-            self.sample_num = p.size(1)
-        
-        label, rot_gt, width_gt, occ_value = target
-            
-        c = self.backbone(inputs)
-        qual = self.decoder_qual(p, c)
-        loss_qual = qual_loss_fn(qual.flatten(), label.flatten(), 0.1).mean()
-        
-        
-        width = self.decoder_width(p, c)
-        tsdf = self.decoder_tsdf(p_tsdf, c)
-        rot_gt_6d = matrix_to_rotation_6d(quaternion_to_matrix(rot_gt))
-        rot_irreps = rot2irreps(rot_gt_6d)
-        
-        grasp = torch.cat((p, rot_gt_6d[:,np.random.randint(0,2),:].unsqueeze(1)), dim=-1)
-        grasp_qual = self.decoder_grasp_qual(grasp, c)
-        loss_grasp_qual = qual_loss_fn(grasp_qual.flatten(), label.flatten(), 0.1).mean()
-        
-        if validate is False:
-            if label.sum() > 0:
-                model_input = {
-                    'data': rot_irreps[label==1],
-                    'context': self.decoder_rot.query_feature(p, c)[label==1].repeat(1, rot_irreps.shape[1], 1)
-                }
-                loss_rot = self.grasp_sampler.loss_fn(self.decoder_rot, model_input).mean()
+    def inference(self, inputs, points, sample_rounds=1, low_th=0.05, gaussian_filter_sigma=1.0):
+        self.batch_size, self.sample_num = points.shape[:2]
+        if self.batch_size != 1:
+            raise ValueError("TriEquiIGDInduce inference requires batch size 1")
+        features = self.backbone(inputs)
+        quality = self.decoder_qual(points, features).sigmoid()
+        if quality.numel() == int(np.prod(inputs.shape[-3:])):
+            quality = gaussian_filter_3d(quality, inputs.shape[-3:], gaussian_filter_sigma)
+        mask = quality > low_th
+        if not mask.any():
+            mask.reshape(-1)[quality.reshape(-1).argmax()] = True
+        positive_points = points[mask].reshape(1, -1, 3)
+        context = self.decoder_rot.query_feature(positive_points, features)
+        best_rotation, best_score = None, None
+        for _ in range(sample_rounds):
+            noise = torch.randn(1, positive_points.shape[1], 6, device=points.device)
+            rotation_6d = irreps2rot(self.grasp_sampler.sample_data(noise, context, self.decoder_rot))
+            score = self.decoder_grasp_qual(torch.cat((positive_points, rotation_6d), dim=-1), features)
+            if best_score is None:
+                best_rotation, best_score = rotation_6d, score
             else:
-                loss_rot = torch.zeros(1).sum()
-        else:
-            context = self.decoder_rot.query_feature(p, c)[label==1]
-            if context.shape[0] == 0:
-                loss_rot = torch.zeros(1).sum()
-            else:
-                noise = torch.rand((context.shape[0], 1, len(self.grasp_sampler.condition_mask)), device=p.device)
-                irreps = self.grasp_sampler.sample_data(noise, context, self.decoder_rot)
-                rot = irreps2rot(irreps)
-                rot = matrix_to_quaternion(rotation_6d_to_matrix(rot)).squeeze(1)
-                loss_rot = rot_loss_fn(rot, rot_gt[label==1]).mean()
-        
-        # loss_qual = qual_loss_fn(qual.squeeze(1), label, 0.1).mean() + loss_grasp_qual
-        loss_qual = loss_qual + loss_grasp_qual
-        # loss_grasp_qual = _qual_loss_fn(grasp_qual.squeeze(1), label).mean()
-        loss_width = width_loss_fn(width[label==1].reshape(-1), width_gt[label==1]).mean()
-        loss_occ = occ_loss_fn(tsdf, occ_value, 0.1).mean()
-        
-        loss = loss_qual +  loss_rot + 0.01 * loss_width + loss_occ
-        loss_dict = {'loss_qual': loss_qual,
-                    'loss_rot': loss_rot,
-                    'loss_width': loss_width,
-                    'loss_occ': loss_occ,
-                    'loss_all': loss}
-        
-        y_pred = ((qual.sigmoid()*grasp_qual.sigmoid()).sqrt(), rot_gt[:,:1], width, tsdf)
-        # y_pred = (qual.sigmoid(), rot_gt[:,:1], width, tsdf)
-        
-        return loss, loss_dict, y_pred
-    
-    def scene_compute_loss(self, inputs, p, target=None, p_tsdf=None, validate=False):
-        """
-        p (num_grasps, 3)
-        inputs (bs, 1, 40, 40, 40)
-        """
-        self.batch_size = inputs.size(0)    
-        label, rot_gt, width_gt, num_grasps, occ_value = target
-        
-        c = self.backbone(inputs)
-        padded_p = padding(p.squeeze(1), num_grasps=num_grasps)
-        valid_mask = ~torch.isnan(padded_p).all(-1)
-        
-        
-        qual = self.decoder_qual(padded_p, c)[valid_mask]
-        neg_p, neg_label = negative_sampling(p, None, rotation=False)
-        padded_neg_grasp = padding(neg_p, num_grasps=num_grasps).reshape(self.batch_size, -1, neg_grasp.shape[-1])
-        neg_qual = self.decoder_qual(neg_p, c)[valid_mask]
-        
-        all_qual = torch.cat((qual.flatten(), neg_qual.flatten()), dim=0)
-        all_label = torch.cat((label.flatten(), neg_label.flatten()), dim=0)
-        loss_qual = sigmoid_focal_loss(all_qual, all_label,  sigmoid=False, reduction='mean',smoothing=0.1)
-        
-        
-        width = self.decoder_width(padded_p, c)[valid_mask]
-        tsdf = self.decoder_tsdf(p_tsdf, c)
-        rot_gt_6d = matrix_to_rotation_6d(quaternion_to_matrix(rot_gt))
-        rot_irreps = rot2irreps(rot_gt_6d)
-        
-        ##### debug ######
-        idx = torch.randint(0, 2, (rot_gt_6d.shape[0], 1, 1), dtype=torch.long).to(p.device)
-        rot_gt_6d = torch.gather(rot_gt_6d, 1, idx.expand(-1,-1,rot_gt_6d.shape[-1])).squeeze(1)
-        grasp = torch.cat((p,rot_gt_6d ), dim=-1)
-        
-        padded_rot_gt_6d = padding(rot_gt_6d, num_grasps=num_grasps)
-        
-        padded_grasp = torch.cat((padded_p, padded_rot_gt_6d), dim=-1)
-        grasp_qual = self.decoder_grasp_qual(padded_grasp, c)[valid_mask]
-        
-        neg_grasp, neg_label = negative_sampling(grasp.unsqueeze(1), None)
-        neg_number = neg_label.shape[-1]
-        padded_neg_grasp = padding(neg_grasp, num_grasps=num_grasps).reshape(self.batch_size, -1, neg_grasp.shape[-1])
-        
-        grasp_qual_neg = self.decoder_grasp_qual(padded_neg_grasp, c).reshape(self.batch_size, -1, neg_number)[valid_mask]
-        
-        all_grasp_qual = torch.cat((grasp_qual, grasp_qual_neg.flatten()), dim=0)
-        all_grasp_label = torch.cat((label, neg_label.flatten()), dim=0)
-        
-        loss_grasp_qual = sigmoid_focal_loss(all_grasp_qual, all_grasp_label, sigmoid=False, reduction='mean')
-        
-        ##### debug ######
-        
-        #### rotation diffusion ####
-        if validate is False:
-            if label.sum() > 0:
-                context = self.decoder_rot.query_feature(padded_p, c)[valid_mask][label==1].unsqueeze(1).repeat(1, rot_irreps.shape[1], 1)
-                model_input = {
-                    'data': rot_irreps[label==1],
-                    'context': context
-                }
-                loss_rot = self.grasp_sampler.loss_fn(self.decoder_rot, model_input).mean()
-            else:
-                loss_rot = torch.zeros(1).sum()
-        else:
-            context = self.decoder_rot.query_feature(padded_p, c)[valid_mask][label==1].unsqueeze(1)
-            noise = torch.rand((context.shape[0], 1, len(self.grasp_sampler.condition_mask)), device=p.device)
-            irreps = self.grasp_sampler.sample_data(noise, context, self.decoder_rot)
-            rot = irreps2rot(irreps)
-            rot = matrix_to_quaternion(rotation_6d_to_matrix(rot)).squeeze(1)
-            loss_rot = rot_loss_fn(rot, rot_gt[label==1]).mean()
-        
-        loss_qual = qual_loss_fn(qual, label, 0.1).mean() + loss_grasp_qual # + qual_loss_fn(grasp_qual, label).mean() # 
-        # loss_grasp_qual = _qual_loss_fn(grasp_qual.squeeze(1), label).mean()
-        loss_width = width_loss_fn(width[label==1].reshape(-1), width_gt[label==1]).mean()
-        loss_occ = occ_loss_fn(tsdf, occ_value, 0.1).mean()
-        
-        loss = loss_qual +  loss_rot + 0.01 * loss_width + loss_occ
-        loss_dict = {'loss_qual': loss_qual,
-                    'loss_rot': loss_rot,
-                    'loss_width': loss_width,
-                    'loss_occ': loss_occ,
-                    'loss_all': loss}
-        
-        # y_pred = ((qual.sigmoid()*grasp_qual.sigmoid()).sqrt(), rot_gt[:,:1], width, tsdf)
-        if validate:
-            y_pred = ((qual.sigmoid()*grasp_qual.sigmoid()).sqrt(), rot, width, tsdf)
-        else:
-            y_pred = ((qual.sigmoid()*grasp_qual.sigmoid()).sqrt(), rot_gt[:,:1], width, tsdf)
-        
-        return loss, loss_dict, y_pred
-    
-    def export(self, ):
+                select = score > best_score
+                best_rotation = torch.where(select.unsqueeze(-1), rotation_6d, best_rotation)
+                best_score = torch.maximum(best_score, score)
+        rotations = torch.randn(1, points.shape[1], 4, device=points.device)
+        rotations[mask] = matrix_to_quaternion(rotation_6d_to_matrix(best_rotation.reshape(-1, 6)))
+        grasp_quality = torch.zeros_like(quality)
+        grasp_quality[mask] = best_score.sigmoid().reshape(-1)
+        return (quality * grasp_quality).sqrt(), rotations, self.decoder_width(points, features)
+
+    def forward(self, inputs, points, target=None, p_tsdf=None):
+        if target is None:
+            return self.inference(inputs, points)
+        self.batch_size, self.sample_num = points.shape[:2]
+        features = self.backbone(inputs)
+        quality = self.decoder_qual(points, features)
+        width = self.decoder_width(points, features)
+        noise = torch.rand(self.batch_size, self.sample_num, 6, device=points.device)
+        sampled = self.grasp_sampler.sample_data(noise, self.decoder_rot.query_feature(points, features), self.decoder_rot)
+        rotation = matrix_to_quaternion(rotation_6d_to_matrix(irreps2rot(sampled)))
+        if p_tsdf is None:
+            return quality, rotation, width
+        return quality, rotation, width, self.decoder_tsdf(p_tsdf, features)
+
+    def export(self):
         self.backbone = self.backbone.export()
         self.decoder_grasp_qual = self.decoder_grasp_qual.export()
         self.decoder_qual = self.decoder_qual.export()
@@ -286,48 +214,3 @@ class TriEquiIGD(nn.Module):
         self.decoder_tsdf = self.decoder_tsdf.export()
         self.decoder_width = self.decoder_width.export()
         return self
-
-
-        
-    def test_eq(self,):
-        p = torch.rand(1, 1, 3)-0.5
-        input_ = torch.randn(1, 1, 40, 40, 40)
-        for g in self.gs.testing_elements:
-            if g.value == 0:
-                continue
-            input = self.backbone.voxel2repr(input_)
-            input = GeometricTensor(input, self.backbone.in_type)
-            input_transformed = input.transform(g)
-
-            rot = Rotation.from_rotvec(np.r_[0.0, 0.0, g.value*np.pi / 2.0])
-            rot_mat = torch.tensor(rot.as_matrix()[:2,:2], dtype=torch.float32)
-
-            p_trans = p.clone()
-            p_trans = torch.tensor(rot.apply(p_trans.numpy().reshape(-1,3))).reshape(1,1,3)
-            p_trans = torch.tensor(p_trans, dtype=torch.float32)
-
-            qual, rot, width = self.forward(input, p)
-            qual_trans, rot_trans, width_trans = self.forward(input_transformed, p_trans)
-
-            rot_trans_after = (rot_mat @ rot.reshape(2,3)).reshape(1,1,6)
-
-            print('rot equi test:  ' + ('YES' if torch.allclose(rot_trans, rot_trans_after, atol=1e-4, rtol=1e-4) else 'NO'))
-            print('width inv test:  ' + ('YES' if torch.allclose(width, width_trans, atol=1e-4, rtol=1e-4) else 'NO'))
-            print('qual inv test:  ' + ('YES' if torch.allclose(qual, qual_trans, atol=1e-4, rtol=1e-4) else 'NO'))
-        return
-
-
-
-
-if __name__=="__main__":
-    p = torch.rand(1, 10, 3)
-    input = torch.randn(1, 1, 40, 40, 40)
-    model = TriEquiIGD()#.cuda()
-    out = model(input, p)
-    export_model = model.export()
-    export_out = export_model(input, p)
-    
-    for i in range(len(out)):
-        print('export test:  ' + ('YES' if torch.allclose(out[i],export_out[i], atol=1e-4, rtol=1e-4) else 'NO'))
-
-    model.test_eq()

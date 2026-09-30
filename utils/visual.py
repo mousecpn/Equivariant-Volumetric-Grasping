@@ -18,7 +18,6 @@ from utils.implicit import as_mesh
 #########
 cmap = plt.get_cmap('Reds')
 
-
 def affordance_visual(qual_vol,
                       rot_vol,
                       scene_mesh,

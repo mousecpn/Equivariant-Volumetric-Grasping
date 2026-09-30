@@ -4,7 +4,7 @@ import numpy as np
 import trimesh
 from scipy import ndimage
 import torch
-
+import sys
 #from vgn import vis
 
 from utils.grasp import *
@@ -12,34 +12,35 @@ from utils.transform import Transform, Rotation, quaternion_to_matrix, matrix_to
 # from utils import visual
 # from utils.implicit import as_mesh
 import torch.nn.functional as F
-from model.giga import GIGA
 import open3d as o3d
-from model.equi_giga import TriEquiGIGA
-from model.equi_igd import TriEquiIGD
-from model.igd import IGD
+from model.equi_giga import TriEquiGIGAInduce
+from model.equi_igd import TriEquiIGDInduce
 LOW_TH = 0.5
 
-def load_network(model_path, model_type, device):
+def load_network(model_path=None, model_type=None, device=None):
     global LOW_TH
-    if model_type == 'giga':
-        LOW_TH = 0.5
-        # LOW_TH = 0.5 # packed
-        net = GIGA().to(device)
-    elif model_type == 'equi_giga':
+    if model_type == 'equi_giga':
         LOW_TH = 0.3
-        # LOW_TH = 0.6 # packed
-        net = TriEquiGIGA().to(device)
+        net = TriEquiGIGAInduce().to(device)
     elif model_type == 'equi_igd':
-        net = TriEquiIGD().to(device)
+        net = TriEquiIGDInduce().to(device)
         LOW_TH = 0.01
-        # LOW_TH = 0.4 # packed
-    elif model_type == 'igd':
-        net = IGD().to(device)
-        LOW_TH = 0.32
-        # LOW_TH = 0.4 # packed
-    net.load_state_dict(torch.load(model_path, map_location=device))
-    if 'equi' in model_type:
-        net = net.export()
+    else:
+        raise ValueError(f"unsupported model type: {model_type}")
+    if model_path is not None:
+        checkpoint = torch.load(model_path, map_location=device)
+        state_dict = checkpoint
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        elif isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif isinstance(checkpoint, dict) and len(checkpoint) == 1:
+            candidate = next(iter(checkpoint.values()))
+            if isinstance(candidate, dict):
+                state_dict = candidate
+        net.load_state_dict(state_dict)
+    # if 'equi' in model_type:
+    #     net = net.export()
     return net
 
 class VGNImplicit(object):

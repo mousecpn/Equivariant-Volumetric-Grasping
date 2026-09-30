@@ -1,0 +1,1 @@
+python sim_grasp_multiple.py --num-view 1 --object-set packed/test --scene packed --num-rounds 100 --sideview --add-noise dex --force --best --model /path/to/model --type equi_giga --result-path result.json
