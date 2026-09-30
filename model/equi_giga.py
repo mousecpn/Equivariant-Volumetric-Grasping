@@ -65,6 +65,14 @@ class EquiGIGA3d(nn.Module):
             return qual, rot, width, tsdf
         else:
             return qual, rot, width
+
+    def export(self):
+        self.backbone = self.backbone.export()
+        self.decoder_qual = self.decoder_qual.export()
+        self.decoder_width = self.decoder_width.export()
+        self.decoder_rot = self.decoder_rot.export()
+        self.decoder_tsdf = self.decoder_tsdf.export()
+        return self  
     
         
 

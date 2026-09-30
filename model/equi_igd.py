@@ -124,6 +124,7 @@ class TriEquiIGD(nn.Module):
         qual = (qual*grasp_qual).sqrt()
         
         return qual, rot, width
+
     
     
     def compute_loss(self, inputs, p, target, p_tsdf, validate=False):

@@ -4,7 +4,7 @@ import numpy as np
 import trimesh
 from scipy import ndimage
 import torch
-
+import sys
 #from vgn import vis
 
 from utils.grasp import *
@@ -14,12 +14,12 @@ from utils.transform import Transform, Rotation, quaternion_to_matrix, matrix_to
 import torch.nn.functional as F
 from model.giga import GIGA
 import open3d as o3d
-from model.equi_giga import TriEquiGIGA
+from model.equi_giga import TriEquiGIGA, EquiGIGA3d
 from model.equi_igd import TriEquiIGD
 from model.igd import IGD
 LOW_TH = 0.5
 
-def load_network(model_path, model_type, device):
+def load_network(model_path=None, model_type=None, device=None):
     global LOW_TH
     if model_type == 'giga':
         LOW_TH = 0.5
@@ -28,7 +28,8 @@ def load_network(model_path, model_type, device):
     elif model_type == 'equi_giga':
         LOW_TH = 0.3
         # LOW_TH = 0.6 # packed
-        net = TriEquiGIGA().to(device)
+        # net = TriEquiGIGA().to(device)
+        net = EquiGIGA3d().to(device)
     elif model_type == 'equi_igd':
         net = TriEquiIGD().to(device)
         LOW_TH = 0.01
@@ -37,9 +38,9 @@ def load_network(model_path, model_type, device):
         net = IGD().to(device)
         LOW_TH = 0.32
         # LOW_TH = 0.4 # packed
-    net.load_state_dict(torch.load(model_path, map_location=device))
-    if 'equi' in model_type:
-        net = net.export()
+    # net.load_state_dict(torch.load(model_path, map_location=device))
+    # if 'equi' in model_type:
+    #     net = net.export()
     return net
 
 class VGNImplicit(object):
