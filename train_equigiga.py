@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 #from vgn.dataset_pc import DatasetPCOcc
 from dataset.dataset_voxel import DatasetVoxelOccFile
-from model.equi_giga import TriEquiGIGA, EquiGIGA3d
+from model.equi_giga import TriEquiGIGAInduce
 import time
 from torch.cuda.amp import GradScaler, autocast
 
@@ -50,7 +50,7 @@ def main(args):
         args.dataset, args.dataset_raw, args.batch_size, args.val_split, args.augment, kwargs)
     
     # build the network or load
-    net = TriEquiGIGA().to(device)
+    net = TriEquiGIGAInduce().to(device)
     if args.load_path != '':
         net.load_state_dict(torch.load(args.load_path, map_location=device))
 

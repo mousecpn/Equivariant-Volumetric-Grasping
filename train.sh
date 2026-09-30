@@ -20,7 +20,7 @@ case "$MODEL" in
     python train_equigiga.py $EXTRA_ARGS
     ;;
   equi_igd)
-    python train_equigigd.py $EXTRA_ARGS
+    python train_equiigd.py $EXTRA_ARGS
     ;;
   giga)
     python train_giga.py $EXTRA_ARGS
