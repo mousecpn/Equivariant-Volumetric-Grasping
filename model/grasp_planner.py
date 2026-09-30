@@ -12,30 +12,21 @@ from utils.transform import Transform, Rotation, quaternion_to_matrix, matrix_to
 # from utils import visual
 # from utils.implicit import as_mesh
 import torch.nn.functional as F
-from model.giga import GIGA
 import open3d as o3d
 from model.equi_giga import TriEquiGIGAInduce
 from model.equi_igd import TriEquiIGDInduce
-from model.igd import IGD
 LOW_TH = 0.5
 
 def load_network(model_path=None, model_type=None, device=None):
     global LOW_TH
-    if model_type == 'giga':
-        LOW_TH = 0.5
-        # LOW_TH = 0.5 # packed
-        net = GIGA().to(device)
-    elif model_type == 'equi_giga':
+    if model_type == 'equi_giga':
         LOW_TH = 0.3
         net = TriEquiGIGAInduce().to(device)
     elif model_type == 'equi_igd':
         net = TriEquiIGDInduce().to(device)
         LOW_TH = 0.01
-        # LOW_TH = 0.4 # packed
-    elif model_type == 'igd':
-        net = IGD().to(device)
-        LOW_TH = 0.32
-        # LOW_TH = 0.4 # packed
+    else:
+        raise ValueError(f"unsupported model type: {model_type}")
     if model_path is not None:
         checkpoint = torch.load(model_path, map_location=device)
         state_dict = checkpoint
