@@ -12,7 +12,11 @@ This repo is the official implementation of the paper: Equivariant Volumetric Gr
 
 - An [Equivariant Triplane UNet](model/triunet_induced.py) for volumetric grasping
 
-- [EquiGIGA](model/equi_giga.py) and [EquiIGD](model/equi_igd.py) models
+- We adapt Equivariant Triplane UNet on [EquiGIGA](model/equi_giga.py) and [EquiIGD](model/equi_igd.py) models.
+
+- This repo also contains a clean and simple implementation for GIGA and IGD, which is compatible with their pretrained checkpoint.
+
+- The current repo implements a full equivariant version of triplane representation. The previous version can be found in the branch: backup/pre-induced-migration-20260930.
 
 ## :bulb: Key insight
 
